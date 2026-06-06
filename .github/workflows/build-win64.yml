@@ -1,0 +1,46 @@
+# Copyright Limon DAS 
+name: Build Verilator for Windows 64bit
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build_verilator_win64:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        id: build
+        run: bash build.sh
+
+      - name: Check if release already exists
+        id: check
+        run: |
+          TAG="v${{ steps.build.outputs.VERSION }}"
+          EXISTS=$(gh release view "$TAG" --repo ${{ github.repository }} 2>/dev/null && echo yes || echo no)
+          echo "exists=$EXISTS" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create release and upload
+        if: steps.check.outputs.exists == 'no'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.check.outputs.tag }}
+          name: Verilator ${{ steps.build.outputs.VERSION }} Windows 64bit
+          files: ${{ steps.build.outputs.TARBALL }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Already up to date
+        if: steps.check.outputs.exists == 'yes'
+        run: echo "Release ${{ steps.check.outputs.tag }} already exists, skipping."
