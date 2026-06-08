@@ -1,200 +1,67 @@
+#copyright Limon DAS
+# based on https://github.com/FPGAwars/toolchain-verilator cross compile script
 #!/bin/bash
-#################################################################
-# Unfused Verilator Toolchain Cross-Builder Script              #
-# Combined & Refactored to build entirely using Git Sources    #
-#################################################################
 set -e
 set -o pipefail
 
-# -- Version Tracker & Configuration
-VERSION=5.048
-ARCH=$1
-TARGET_ARCHS="linux_x86_64 linux_i686 linux_armv7l linux_aarch64 windows_x86 windows_amd64 darwin"
-NAME=toolchain-verilator
+ARCH=windows_amd64
+NAME=verilator-windows
 
-# -- Flag Controls
-INSTALL_DEPS=1
-COMPILE_VERILATOR=1
-CREATE_PACKAGE=1
-
-# -- Environment Work Directories
 WORK_DIR=$PWD
-BUILDS_DIR=$WORK_DIR/_builds
-PACKAGES_DIR=$WORK_DIR/_packages
 UPSTREAM_DIR=$WORK_DIR/_upstream
+BUILD_DIR=$WORK_DIR/_builds/build_$ARCH
+PACKAGE_DIR=$WORK_DIR/_packages/build_$ARCH
+PKG=$PACKAGE_DIR/$NAME
 
-# -- Scaffold Base File System
-mkdir -p "$BUILDS_DIR" "$PACKAGES_DIR" "$UPSTREAM_DIR"
-
-# -- Utility Print Functions
-function print_status {
-  echo ""
-  echo ">>> $1"
-  echo ""
-}
-
-# -- Check Target Architecture Input
-if [[ $# > 1 ]]; then
-  echo "Error: too many arguments"
-  exit 1
-fi
-
-if [[ $# < 1 ]]; then
-  echo "Usage: bash build.sh TARGET"
-  echo "Targets: $TARGET_ARCHS"
-  exit 1
-fi
-
-if [[ $ARCH =~ [[:space:]] || ! $TARGET_ARCHS =~ (^|[[:space:]])$ARCH([[:space:]]|$) ]]; then
-  echo ">>> WRONG ARCHITECTURE \"$ARCH\""
-  exit 1
-fi
-
-print_status "TARGET ARCHITECTURE COMPILING: $ARCH"
-
-BUILD_DIR=$BUILDS_DIR/build_$ARCH
-PACKAGE_DIR=$PACKAGES_DIR/build_$ARCH
-
-# =================================================================
-# 1. DEPENDENCY SETUP STAGE
-# =================================================================
-if [ "$INSTALL_DEPS" == "1" ]; then
-  print_status "Installing cross-platform toolchain build dependencies..."
-  
-  sudo apt-get update -qq
-  
-  if [ "$ARCH" == "linux_x86_64" ]; then
-    sudo apt-get install -y build-essential bison flex gperf autoconf git perl python3 make rsync
-  fi
-
-  if [ "$ARCH" == "linux_i686" ]; then
-    sudo apt-get install -y build-essential bison flex gperf autoconf git perl python3 make rsync \
-                            gcc-multilib g++-multilib
-  fi
-
-  if [ "$ARCH" == "linux_armv7l" ]; then
-    sudo apt-get install -y build-essential bison flex gperf autoconf git perl python3 make rsync \
-                            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
-                            binfmt-support qemu-user-static
-  fi
-
-  if [ "$ARCH" == "linux_aarch64" ]; then
-    sudo apt-get install -y build-essential bison flex gperf autoconf git perl python3 make rsync \
-                            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-                            binfmt-support qemu-user-static
-  fi
-
-  if [ "${ARCH:0:7}" == "windows" ]; then
-    sudo apt-get install -y build-essential bison flex gperf autoconf git perl python3 make rsync \
-                            mingw-w64 mingw-w64-tools wine
-  fi
-
-  if [ "$ARCH" == "darwin" ]; then
-    DEPS="bison flex autoconf git"
-    brew update
-    brew install --force $DEPS
-    brew unlink $DEPS && brew link --force $DEPS
-  fi
-  
-  sudo apt-get autoremove -y
-fi
-
-# =================================================================
-# 2. CROSS-COMPILER MATRIX FLAGS DEFINITIONS
-# =================================================================
-EXE=""
-HOST="x86_64-linux-gnu"
-CONFIG_HOST=""
+EXE=".exe"
+HOST="x86_64-w64-mingw32"
+BUILD="x86_64-unknown-linux-gnu"
 MAKE_CFLAGS="-O2"
 MAKE_CXXFLAGS="-O2"
-MAKE_LDFLAGS="-static"
-
-if [ "$ARCH" == "linux_i686" ]; then
-  CONFIG_HOST="-m32"
-  MAKE_LDFLAGS="-m32 -static"
-fi
-
-if [ "$ARCH" == "linux_armv7l" ]; then
-  HOST="arm-linux-gnueabihf"
-fi
-
-if [ "$ARCH" == "linux_aarch64" ]; then
-  HOST="aarch64-linux-gnu"
-fi
-
-if [ "$ARCH" == "windows_x86" ]; then
-  EXE=".exe"
-  HOST="i686-w64-mingw32"
-fi
-
-if [ "$ARCH" == "windows_amd64" ]; then
-  EXE=".exe"
-  HOST="x86_64-w64-mingw32"
-  MAKE_LDFLAGS="-static -static-libgcc -static-libstdc++"
-fi
-
-if [ "$ARCH" == "darwin" ]; then
-  J=$(($(sysctl -n hw.ncpu) - 1))
-else
-  J=$(($(nproc) - 1))
-  BUILD="x86_64-unknown-linux-gnu"
-fi
+MAKE_LDFLAGS="-static -static-libgcc -static-libstdc++"
+J=$(($(nproc) - 1))
 [ "$J" -lt 1 ] && J=1
 
-# Setup compiler overrides for windows targeting configurations
-if [ "${ARCH:0:7}" == "windows" ]; then
-  GCC_POSIX=$(ls /usr/bin/x86_64-w64-mingw32-gcc-posix 2>/dev/null || ls /usr/bin/x86_64-w64-mingw32-gcc-*posix* 2>/dev/null | head -1)
-  GPP_POSIX=$(ls /usr/bin/x86_64-w64-mingw32-g++-posix 2>/dev/null || ls /usr/bin/x86_64-w64-mingw32-g++-*posix* 2>/dev/null | head -1)
+mkdir -p "$UPSTREAM_DIR" "$BUILD_DIR" "$PKG/bin"
 
-  if [ -n "$GCC_POSIX" ]; then
-      sudo update-alternatives --set x86_64-w64-mingw32-gcc "$GCC_POSIX" 2>/dev/null || true
-  fi
-  if [ -n "$GPP_POSIX" ]; then
-      sudo update-alternatives --set x86_64-w64-mingw32-g++ "$GPP_POSIX" 2>/dev/null || true
-  fi
+sudo apt-get update -qq
+sudo apt-get install -y \
+    build-essential bison flex gperf autoconf \
+    git help2man perl python3 make rsync \
+    libfl-dev zlib1g-dev \
+    mingw-w64 mingw-w64-tools
 
-  export CC="${GCC_POSIX:-x86_64-w64-mingw32-gcc}"
-  export CXX="${GPP_POSIX:-x86_64-w64-mingw32-g++}"
-  export AR="$HOST-ar"
-  export RANLIB="$HOST-ranlib"
-elif [ "$ARCH" != "darwin" ]; then
-  export CC="$HOST-gcc $CONFIG_HOST"
-  export CXX="$HOST-g++ $CONFIG_HOST"
+GCC_POSIX=$(ls /usr/bin/x86_64-w64-mingw32-gcc-posix 2>/dev/null || \
+            ls /usr/bin/x86_64-w64-mingw32-gcc-*posix* 2>/dev/null | head -1)
+GPP_POSIX=$(ls /usr/bin/x86_64-w64-mingw32-g++-posix 2>/dev/null || \
+            ls /usr/bin/x86_64-w64-mingw32-g++-*posix* 2>/dev/null | head -1)
+
+if [ -n "$GCC_POSIX" ]; then
+    sudo update-alternatives --set x86_64-w64-mingw32-gcc "$GCC_POSIX" 2>/dev/null || true
+fi
+if [ -n "$GPP_POSIX" ]; then
+    sudo update-alternatives --set x86_64-w64-mingw32-g++ "$GPP_POSIX" 2>/dev/null || true
 fi
 
-# Create target environment directories
-mkdir -p "$BUILD_DIR"
-mkdir -p "$PACKAGE_DIR/$NAME/bin"
+export CC="${GCC_POSIX:-x86_64-w64-mingw32-gcc}"
+export CXX="${GPP_POSIX:-x86_64-w64-mingw32-g++}"
+export AR="$HOST-ar"
+export RANLIB="$HOST-ranlib"
 
-# =================================================================
-# 3. SOURCE RETRIEVAL & VERILATOR COMPILATION
-# =================================================================
-if [ "$COMPILE_VERILATOR" == "1" ]; then
-  print_status "Compiling Verilator System via GitHub Source Tracking..."
+echo "CC  = $CC  -> $($CC --version | head -1)"
+echo "CXX = $CXX -> $($CXX --version | head -1)"
 
-  cd "$UPSTREAM_DIR"
-  if [ ! -d "verilator" ]; then
-    git clone --branch stable https://github.com/verilator/verilator.git
-    cd verilator
-  else
-    cd verilator
-    git pull
-  fi
+cd "$UPSTREAM_DIR"
+git clone --branch stable https://github.com/verilator/verilator.git
+cd verilator
 
-  VERSION=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//')
-  print_status "Building Verilator Target Release v$VERSION"
+VERSION=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//')
+echo "Building Verilator v$VERSION for $ARCH"
 
-  # Sync source tree into structural builds directory 
-  rsync -a . "$BUILD_DIR/verilator" --exclude .git
-  cd "$BUILD_DIR/verilator"
+FLEXLEXER=$(find /usr/include /usr/local/include -name "FlexLexer.h" 2>/dev/null | head -1)
+[ -n "$FLEXLEXER" ] && cp "$FLEXLEXER" src/.
 
-  if [ "${ARCH:0:7}" == "windows" ]; then
-    FLEXLEXER=$(find /usr/include /usr/local/include -name "FlexLexer.h" 2>/dev/null | head -1)
-    [ -n "$FLEXLEXER" ] && cp "$FLEXLEXER" src/.
-  fi
-
-  # Apply configuration bypass patches via automated pipeline stream
-  python3 - <<'EOF'
+python3 - <<'EOF'
 import sys
 with open('configure.ac', 'r') as f:
     c = f.read()
@@ -206,68 +73,131 @@ with open('configure.ac', 'w') as f:
     f.write(c.replace(old, new))
 EOF
 
-  autoconf
+autoconf
 
-  # Run generation configuration with absolute path translation stripped out
-  if [ "$ARCH" == "darwin" ]; then
-    ./configure --prefix="$PACKAGE_DIR/$NAME" --datadir='${prefix}/share'
-  else
-    ./configure --build="$BUILD" --host="$HOST" --prefix="$PACKAGE_DIR/$NAME" --datadir='${prefix}/share'
-  fi
+./configure --build="$BUILD" --host="$HOST" --prefix="$PKG"
 
-  cd src
-  make opt -j"$J" CFLAGS="$MAKE_CFLAGS" CXXFLAGS="$MAKE_CXXFLAGS" LDFLAGS="$MAKE_LDFLAGS"
+make -j"$J" -C src opt \
+    CFLAGS="$MAKE_CFLAGS" \
+    CXXFLAGS="$MAKE_CXXFLAGS" \
+    LDFLAGS="$MAKE_LDFLAGS"
 
-  # Output Stripping and Binary Installation Execution
-  if [ "${ARCH:0:7}" == "windows" ]; then
-    file bin/verilator_bin.exe | grep -q "PE32+" || { echo "ERROR: File is not a valid Windows build."; exit 1; }
-    "$HOST-strip" bin/verilator_bin.exe
-    cp bin/verilator_bin.exe "$PACKAGE_DIR/$NAME/bin/verilator$EXE"
-  else
-    cp bin/verilator_bin "$PACKAGE_DIR/$NAME/bin/verilator"
-  fi
+file bin/verilator_bin.exe | grep -q "PE32+" || { echo "ERROR: not PE32+"; exit 1; }
 
-  # Stage include libraries
-  cp -r ../include/. "$PACKAGE_DIR/$NAME/include/"
+"$HOST-strip" bin/verilator_bin.exe
 
-  # Stage and structuralizing Core Framework Waivers & Internal Definition Mappings
-  mkdir -p "$PACKAGE_DIR/$NAME/share/verilator/include"
-  cp verilated_std_waiver.vlt "$PACKAGE_DIR/$NAME/share/verilator/include/"
-  cp verilated_std.sv "$PACKAGE_DIR/$NAME/share/verilator/include/"
-fi
+cp bin/verilator_bin.exe "$PKG/bin/verilator${EXE}"
 
-# =================================================================
-# 4. EXPORT PACKAGING STAGE
-# =================================================================
-if [ "$CREATE_PACKAGE" == "1" ]; then
-  print_status "Structuring output distribution packages..."
+# ── FIX 1: Copy include files to ALL locations Verilator searches ──
+cp -r include/. "$PKG/include/"
+mkdir -p "$PKG/share/verilator/include"
+cp -r include/. "$PKG/share/verilator/include/"
 
-  # Generate clean structured templates dynamically
-  cat > "$PACKAGE_DIR/$NAME/package.json" << EOF
+# ── FIX 2: Patch verilated.mk — replace Linux cross-compiler names
+#           with portable names so w64devkit g++ works on Windows ──
+for MK_FILE in "$PKG/include/verilated.mk" "$PKG/share/verilator/include/verilated.mk"; do
+    if [ -f "$MK_FILE" ]; then
+        sed -i 's|x86_64-w64-mingw32-g++-posix|g++|g'   "$MK_FILE"
+        sed -i 's|x86_64-w64-mingw32-gcc-posix|gcc|g'   "$MK_FILE"
+        sed -i 's|x86_64-w64-mingw32-g++|g++|g'         "$MK_FILE"
+        sed -i 's|x86_64-w64-mingw32-gcc|gcc|g'         "$MK_FILE"
+        sed -i 's|x86_64-w64-mingw32-ar|ar|g'           "$MK_FILE"
+        echo "Patched: $MK_FILE"
+    fi
+done
+
+# ── FIX 3: Create a Windows batch wrapper (verilator.bat)
+#           so users don't need to set VERILATOR_ROOT manually ──
+cat > "$PKG/bin/verilator.bat" << 'BATEOF'
+@echo off
+:: Auto-detect VERILATOR_ROOT from this script's location
+SET SCRIPT_DIR=%~dp0
+SET VERILATOR_ROOT=%SCRIPT_DIR%..
+SET VERILATOR_ROOT=%VERILATOR_ROOT:\=/%
+
+:: Ensure g++ (w64devkit) is available
+WHERE g++ >nul 2>&1
+IF %ERRORLEVEL% NEQ 0 (
+    echo ERROR: g++ not found. Please open w64devkit terminal or add g++ to PATH.
+    exit /b 1
+)
+
+:: Run verilator with correct root
+SET PATH=%SCRIPT_DIR%;%PATH%
+verilator.exe %*
+BATEOF
+
+# ── FIX 4: Create a helper run script for w64devkit shell ──
+cat > "$PKG/bin/verilator.sh" << 'SHEOF'
+#!/bin/sh
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export VERILATOR_ROOT="$(dirname "$SCRIPT_DIR")"
+exec "$SCRIPT_DIR/verilator.exe" "$@"
+SHEOF
+chmod +x "$PKG/bin/verilator.sh"
+
+# ── FIX 5: README for Windows users ──
+cat > "$PKG/README_WINDOWS.txt" << READMEEOF
+=== Verilator $VERSION for Windows (w64devkit) ===
+
+REQUIREMENTS:
+  - w64devkit: https://github.com/skeeto/w64devkit/releases
+
+SETUP (run once):
+  1. Extract this package to a folder, e.g. C:\verilator
+  2. Add to PATH (User environment variable):
+       C:\verilator\bin
+  3. Set VERILATOR_ROOT (User environment variable):
+       C:\verilator
+
+USAGE (always from w64devkit terminal):
+  verilator --cc --top-module top test.sv
+  make -C obj_dir -f Vtop.mk
+
+  OR for direct binary build:
+  verilator --binary --top-module top test.sv
+
+DO NOT use cmd.exe or PowerShell — use w64devkit shell only.
+READMEEOF
+
+cat > "$PKG/package.json" << EOF
 {
-  "name": "$NAME",
-  "description": "Verilator core automated toolchain asset package",
-  "url": "https://github.com/verilator/verilator",
+  "name": "verilator-windows",
+  "description": "Verilator for windows",
+  "url": "https://github.com/withlimon/verilator-windows",
   "version": "$VERSION",
-  "system": [ "$ARCH" ]
+  "system": [ "windows", "windows_amd64" ]
 }
 EOF
 
-  # If targeting execution on Windows hosts, wrap with dynamic runtime auto-discovery
-  if [ "${ARCH:0:7}" == "windows" ]; then
-    cat > "$PACKAGE_DIR/$NAME/bin/verilator.bat" << 'EOF'
-@echo off
-set "SCRIPT_DIR=%~dp0"
-for %%I in ("%SCRIPT_DIR%..") do set "VERILATOR_ROOT=%%~fI"
-"%SCRIPT_DIR%verilator.exe" %*
-EOF
-  fi
+cd "$PKG"
+tar -czvf "$PACKAGE_DIR/${NAME}-${ARCH}-${VERSION}.tar.gz" *
 
-  # Run standard tar archive distribution output extraction
-  cd "$PACKAGE_DIR/$NAME"
-  tar -czvf "../$NAME-$ARCH-$VERSION.tar.gz" *
+TARBALL="$PACKAGE_DIR/${NAME}-${ARCH}-${VERSION}.tar.gz"
 
-  TARBALL="$PACKAGE_DIR/../$NAME-$ARCH-$VERSION.tar.gz"
-  print_status "COMPILATION SUCCESSFUL!"
-  echo "Package Asset Created : $NAME-$ARCH-$VERSION.tar.gz"
-fi
+# ── Verification ──
+FILE="$PKG/bin/verilator${EXE}"
+test -e "$FILE"                          || { echo "FAIL: binary missing";    exit 1; }
+file "$FILE" | grep -q "PE32+"           || { echo "FAIL: not PE32+";         exit 1; }
+test -f "$PKG/include/verilated.mk"      || { echo "FAIL: verilated.mk missing"; exit 1; }
+test -f "$PKG/include/verilated_std.sv"  || { echo "FAIL: verilated_std.sv missing"; exit 1; }
+grep -q "x86_64-w64-mingw32" "$PKG/include/verilated.mk" \
+                                         && { echo "FAIL: mk still has cross-compiler"; exit 1; }
+"$HOST-objdump" -p "$FILE" | grep "DLL Name"
+
+echo "VERSION=$VERSION" >> "${GITHUB_OUTPUT:-/dev/null}"
+echo "TARBALL=$TARBALL"  >> "${GITHUB_OUTPUT:-/dev/null}"
+
+echo ""
+echo "================================================"
+echo " Package : $TARBALL"
+echo " Size    : $(ls -lh "$TARBALL" | awk '{print $5}')"
+echo " SHA1    : $(sha1sum "$TARBALL" | cut -d' ' -f1)"
+echo "================================================"
+echo " Fixes applied:"
+echo "  [1] include/ mirrored to share/verilator/include/"
+echo "  [2] verilated.mk cross-compiler names patched to g++/gcc"
+echo "  [3] verilator.bat auto-detects VERILATOR_ROOT"
+echo "  [4] verilator.sh wrapper for w64devkit shell"
+echo "  [5] README_WINDOWS.txt included"
+echo "================================================"
