@@ -73,7 +73,10 @@ EOF
 
 autoconf
 
-./configure --build="$BUILD" --host="$HOST" --prefix="$PKG"
+# PATCH 1: Force configure to handle data directories relatively
+./configure --build="$BUILD" --host="$HOST" --prefix="$PKG" \
+            --datadir='${prefix}/share' \
+            --pkgdatadir='${prefix}/share/verilator'
 
 make -j"$J" -C src opt \
     CFLAGS="$MAKE_CFLAGS" \
@@ -84,8 +87,21 @@ file bin/verilator_bin.exe | grep -q "PE32+" || { echo "ERROR: not PE32+"; exit 
 
 "$HOST-strip" bin/verilator_bin.exe
 
+# PATCH 2: Copy missing asset standard files & structure to the package 
 cp bin/verilator_bin.exe "$PKG/bin/verilator${EXE}"
 cp -r include/. "$PKG/include/"
+
+mkdir -p "$PKG/share/verilator/include"
+cp src/verilated_std_waiver.vlt "$PKG/share/verilator/include/"
+cp src/verilated_std.sv "$PKG/share/verilator/include/"
+
+# PATCH 3: Create a native Windows batch file wrapper for auto-detecting pathing variables
+cat > "$PKG/bin/verilator.bat" << 'EOF'
+@echo off
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..") do set "VERILATOR_ROOT=%%~fI"
+"%SCRIPT_DIR%verilator.exe" %*
+EOF
 
 cat > "$PKG/package.json" << EOF
 {
