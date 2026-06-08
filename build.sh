@@ -174,7 +174,18 @@ cd "$PKG"
 tar -czvf "$PACKAGE_DIR/${NAME}-${ARCH}-${VERSION}.tar.gz" *
 
 TARBALL="$PACKAGE_DIR/${NAME}-${ARCH}-${VERSION}.tar.gz"
+# ── FIX 6: Copy all verilator helper scripts to bin/ ──
+for SCRIPT in verilator_includer verilator_gantt verilator_profcfunc; do
+    SRC="$UPSTREAM_DIR/verilator/bin/$SCRIPT"
+    if [ -f "$SRC" ]; then
+        cp "$SRC" "$PKG/bin/$SCRIPT"
+        echo "Copied helper: $SCRIPT"
+    fi
+done
 
+# Also copy any bin/ perl/python scripts
+cp "$UPSTREAM_DIR/verilator/bin/verilator" "$PKG/bin/verilator" 2>/dev/null || true
+cp "$UPSTREAM_DIR/verilator/bin/"verilator_* "$PKG/bin/" 2>/dev/null || true
 # ── Verification ──
 FILE="$PKG/bin/verilator${EXE}"
 test -e "$FILE"                          || { echo "FAIL: binary missing";    exit 1; }
