@@ -552,7 +552,32 @@ PKGJSONEOF
 cd "$PKG"
 TARBALL="$PACKAGE_DIR/${NAME}-${ARCH}-${VERSION}.tar.gz"
 tar -czvf "$TARBALL" *
+patch_mk() {
+    local MK="$1"
+    [ -f "$MK" ] || return
 
+    # ... existing patches ...
+
+    # FIX-21: Force static C++ runtime to prevent ABI mismatch on Windows
+    # Prevents "undefined reference to std::__cxx11::basic_string(&&)"
+    # caused by -lpthread pulling incompatible winpthread C++ runtime
+    if grep -q "^LDFLAGS" "$MK"; then
+        sed -i '/^LDFLAGS/s/$/ -static-libstdc++ -static-libgcc/' "$MK"
+    else
+        echo 'LDFLAGS += -static-libstdc++ -static-libgcc' >> "$MK"
+    fi
+
+    # FIX-22: Separate LDLIBS from LDFLAGS so order is correct
+    # Linker order matters: objects → static runtime → thread libs
+    sed -i 's|-pthread -lpthread -latomic|-lpthread -latomic -Wl,--as-needed|g' "$MK"
+
+    # FIX-23: Remove -latomic if not available (x86_64 has native atomics)
+    # w64devkit may not have libatomic; hardware atomics cover it
+    sed -i 's| -latomic||g' "$MK"
+    sed -i 's|-latomic ||g' "$MK"
+
+    echo "  Patched: $MK"
+}
 # ── Final verification ────────────────────────────────────────
 echo ""
 echo "══ Verification ════════════════════════════════════════"
